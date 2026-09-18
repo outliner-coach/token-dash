@@ -208,11 +208,11 @@ struct CodexView: View {
         let hit = g.input > 0 ? Double(g.cached) / Double(g.input) : 0
         return HStack(spacing: 12) {
             StatTile(label: "전체 기간 (총 처리)", value: Fmt.tokens(g.total),
-                     caption: "\(view.dailySeries().count)일 활동 · \(Fmt.decimal(Int64(g.events)))건")
+                     caption: "\(view.dailySeries().count)일 활동 · \(Fmt.decimal(Int64(g.events)))건 · 추정 \(Fmt.usd(CodexCost.totalCost(snap, plan: plan)))")
             StatTile(label: "오늘", value: Fmt.tokens(todayT.total),
-                     caption: "출력 \(Fmt.tokens(todayT.output))")
+                     caption: "출력 \(Fmt.tokens(todayT.output)) · 추정 \(Fmt.usd(CodexCost.rangeCost(snap, plan: plan, from: today, to: today)))")
             StatTile(label: "이번 달", value: Fmt.tokens(monthT.total),
-                     caption: "출력 \(Fmt.tokens(monthT.output))")
+                     caption: "출력 \(Fmt.tokens(monthT.output)) · 추정 \(Fmt.usd(CodexCost.rangeCost(snap, plan: plan, from: TimeUtil.startOfMonthDay(), to: today)))")
             StatTile(label: "실제 새 입력", value: Fmt.tokens(g.freshInput),
                      caption: "캐시 제외 · 전체 기간", valueColor: Theme.blue)
             StatTile(label: "캐시 적중률", value: String(format: "%.1f%%", hit * 100),
@@ -223,11 +223,14 @@ struct CodexView: View {
     // MARK: 모델 / 프로젝트
 
     private var modelCard: some View {
-        let models = view.rankedModels(snap.models)
+        let models = view.rankedModels(snap.models).filter { CodexCost.isKnown($0.name) }
+        let costs = CodexCost.costByModelName(snap, plan: plan)
         let total = max(1, view.grand.total)
+        let unk = CodexCost.unknownShare(snap, plan: plan)
+        let unpriced = CodexCost.unpricedShare(snap, plan: plan)
         return CardBox {
             VStack(alignment: .leading, spacing: 14) {
-                SectionTitle(text: "모델별", trailing: "\(models.count)종")
+                SectionTitle(text: "모델별", trailing: "\(models.count)종 · 추정 \(Fmt.usd(costs.values.reduce(0, +)))")
                 Chart(Array(models.enumerated()), id: \.offset) { idx, m in
                     SectorMark(angle: .value("토큰", m.totals.total),
                                innerRadius: .ratio(0.62), angularInset: 1.5)
@@ -250,8 +253,15 @@ struct CodexView: View {
                             Text(Fmt.tokens(m.totals.total))
                                 .font(.system(size: 12, design: .rounded)).foregroundStyle(Theme.dim)
                                 .frame(width: 66, alignment: .trailing)
+                            Text(Fmt.usd(costs[m.name] ?? 0))
+                                .font(.system(size: 12, design: .rounded)).foregroundStyle(Theme.dim)
+                                .frame(width: 66, alignment: .trailing)
                         }
                     }
+                }
+                if unpriced > 0 {
+                    Text("요율표 없음 \(String(format: "%.1f%%", unpriced * 100)) 제외(모델 미상 \(String(format: "%.1f%%", unk * 100)) 포함) · 비용은 공개 요율 추정치")
+                        .font(.system(size: 11)).foregroundStyle(Theme.faint)
                 }
             }
         }
@@ -260,6 +270,7 @@ struct CodexView: View {
 
     private var projectCard: some View {
         let projects = view.rankedProjects(snap.projects)
+        let costs = CodexCost.costByProjectPath(snap, plan: plan)
         let maxV = projects.first?.totals.total ?? 1
         let total = max(1, view.grand.total)
         return CardBox {
@@ -272,6 +283,7 @@ struct CodexView: View {
                     Text("비중").frame(width: 120, alignment: .leading)
                     Text("출력").frame(width: 70, alignment: .trailing)
                     Text("총 처리").frame(width: 78, alignment: .trailing)
+                    Text("비용(추정)").frame(width: 66, alignment: .trailing)
                 }
                 .font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.faint)
                 Divider().overlay(Theme.border).padding(.vertical, 6)
@@ -307,6 +319,9 @@ struct CodexView: View {
                         Text(Fmt.tokens(p.totals.total))
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(Theme.text).frame(width: 78, alignment: .trailing)
+                        Text(Fmt.usd(costs[p.path] ?? 0))
+                            .font(.system(size: 12, design: .rounded)).foregroundStyle(Theme.dim)
+                            .frame(width: 66, alignment: .trailing)
                     }
                     .padding(.vertical, 6)
                     if idx < min(14, projects.count) - 1 { Divider().overlay(Theme.border.opacity(0.45)) }
@@ -324,11 +339,13 @@ struct CodexView: View {
             P(id: $0.day, date: TimeUtil.startOfLocalDay($0.day),
               total: $0.totals.total, output: $0.totals.output)
         }
+        let rangeCost = pts.isEmpty ? 0 : CodexCost.rangeCost(
+            snap, plan: plan, from: pts.first!.id, to: pts.last!.id)
         return CardBox {
             VStack(alignment: .leading, spacing: 14) {
                 SectionTitle(text: "일별 사용량",
                              trailing: pts.isEmpty ? "" :
-                                "\(TimeUtil.dayString(pts.first!.id)) → \(TimeUtil.dayString(pts.last!.id))")
+                                "\(TimeUtil.dayString(pts.first!.id)) → \(TimeUtil.dayString(pts.last!.id)) · 추정 \(Fmt.usd(rangeCost))")
                 Chart(pts) { p in
                     BarMark(x: .value("날짜", p.date, unit: .day), y: .value("토큰", p.total))
                         .foregroundStyle(.linearGradient(
@@ -351,7 +368,7 @@ struct CodexView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("파일 \(Fmt.decimal(Int64(snap.scannedFiles)))개 · 이벤트 \(Fmt.decimal(Int64(view.grand.events)))건 · 스캔 \(String(format: "%.1f", snap.scanSeconds))초 · ~/.codex/sessions")
             Text("Codex 는 total_token_usage 가 세션 누계라 증가분만 더합니다(중복 이벤트는 증가분 0으로 자동 배제). 필드가 포함관계라 total = input + output 이고 캐시 읽기는 input 의 일부입니다 — Claude 처럼 캐시를 따로 더하면 이중 계상됩니다.")
-            Text("resume 때문에 파일명 날짜와 내용 날짜가 다를 수 있어, 귀속은 각 이벤트의 타임스탬프(KST)를 씁니다. 비용은 gpt-5.x 공식 요율을 확인하지 못해 표시하지 않습니다.")
+            Text("resume 때문에 파일명 날짜와 내용 날짜가 다를 수 있어, 귀속은 각 이벤트의 타임스탬프(KST)를 씁니다. 비용은 OpenAI 공개 요율(캐시 읽기 0.1x, 추론은 출력)로 계산한 추정치입니다. gpt-5.6-sol 은 2026-11-21까지 할인($4/$20), 이후 정가($5/$30)를 일자별로 적용합니다. 요율표에 없는 모델(미상 포함)은 0원 처리하고 순위에서 제외합니다.")
             Text("계정 구분은 로그의 plan_type 을 대용으로 씁니다(세션 로그에 계정 식별자가 없음). 같은 플랜을 쓰는 계정이 둘 이상이면 합쳐져 보이고, plan 이 한 번도 기록되지 않은 파일은 '미상'으로 잡힙니다.")
         }
         .font(.system(size: 11)).foregroundStyle(Theme.faint).padding(.top, 2)

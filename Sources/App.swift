@@ -144,7 +144,8 @@ struct ContentView: View {
                         Group {
                             switch state.tab {
                             case .overview: OverviewView(snap: snap, limits: state.limits, config: state.config,
-                                                          official: state.official, officialNote: state.officialNote)
+                                                          official: state.official, officialNote: state.officialNote,
+                                                          codex: state.codex)
                             case .projects: RankView(snap: snap, kind: .project)
                             case .models: RankView(snap: snap, kind: .model)
                             case .sessions: RankView(snap: snap, kind: .session)

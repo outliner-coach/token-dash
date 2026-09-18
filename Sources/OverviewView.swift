@@ -7,6 +7,8 @@ struct OverviewView: View {
     let config: Config
     var official: OfficialUsage? = nil
     var officialNote: String = ""
+    /// nil 이면 Codex 행을 숨긴다. Claude 수치와 합산하지 않는다.
+    var codex: CodexSnapshot? = nil
 
     private var today: Int32 { TimeUtil.todayDay() }
     private var todayTotals: Totals { snap.totals(fromDay: today, toDay: today) }
@@ -23,6 +25,11 @@ struct OverviewView: View {
             kpiRow
             LimitStatusCard(snap: snap, burn: burn, limits: limits, config: config,
                             official: official, officialNote: officialNote)
+            if let cx = codex, !cx.isEmpty {
+                unitBanner(text: "Codex — Claude와 합산하지 않고 나란히 표시 · 총 처리 토큰(input+output) 기준",
+                           color: Theme.teal)
+                codexRow(cx)
+            }
             unitBanner(text: "사용 분석 — 총 처리 토큰 (입력·캐시·출력 전부, 캐시읽기 포함). '어디에 얼마나 썼나' 용도",
                        color: Theme.teal)
             StackedDailyCard(snap: snap)
@@ -84,11 +91,38 @@ struct OverviewView: View {
         p > 0.85 ? Theme.red : (p > 0.6 ? Theme.orange : base)
     }
 
+    /// Codex 나란히 행. 전체 플랜 합산(미상 플랜 포함)이며 Claude 수치와 더하지 않는다.
+    private func codexRow(_ cx: CodexSnapshot) -> some View {
+        let rl = cx.rateLimits
+        let five = rl.fiveHour.map { $0.usedPercent / 100 }
+        let week = rl.weekly.map { $0.usedPercent / 100 }
+        let todayT = cx.all.totals(fromDay: today, toDay: today)
+        let monthT = cx.all.totals(fromDay: TimeUtil.startOfMonthDay(), toDay: today)
+        return HStack(spacing: 12) {
+            StatTile(label: "Codex 5시간 한도",
+                     value: five.map(Fmt.percent) ?? "–",
+                     caption: rl.fiveHour.flatMap { $0.resetsAt }.map { "리셋 \(TimeUtil.resetLabel($0))" } ?? "기록 없음",
+                     valueColor: five.map { warn($0, base: Theme.green) } ?? Theme.text)
+            StatTile(label: "Codex 7일 한도",
+                     value: week.map(Fmt.percent) ?? "–",
+                     caption: rl.weekly.flatMap { $0.resetsAt }.map { "리셋 \(TimeUtil.resetLabel($0))" } ?? "기록 없음",
+                     valueColor: week.map { warn($0, base: Theme.teal) } ?? Theme.text)
+            StatTile(label: "오늘 · Codex (총 처리)",
+                     value: Fmt.tokens(todayT.total),
+                     caption: "추정 \(Fmt.usd(CodexCost.rangeCost(cx, plan: nil, from: today, to: today)))")
+            StatTile(label: "이번 달 · Codex (총 처리)",
+                     value: Fmt.tokens(monthT.total),
+                     caption: "추정 \(Fmt.usd(CodexCost.rangeCost(cx, plan: nil, from: TimeUtil.startOfMonthDay(), to: today)))")
+        }
+    }
+
     private var footnote: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("파일 \(Fmt.decimal(Int64(snap.scannedFiles)))개 · 원본 \(Fmt.decimal(Int64(snap.rawLines)))줄에서 중복 \(Fmt.decimal(Int64(snap.duplicatesDropped)))줄 제거 → 고유 요청 \(Fmt.decimal(Int64(snap.grand.requests)))건 · 스캔 \(String(format: "%.1f", snap.scanSeconds))초")
             Text("한 번의 API 응답이 content block 수만큼 여러 줄로 기록되고 각 줄이 같은 usage 를 복사해 갖기 때문에, (message.id + requestId) 기준으로 중복을 제거합니다. 다만 output_tokens 만은 마지막 줄에 최종값이 실리므로 그룹 내 최대값을 채택합니다.")
             Text("비용은 공개 요율(캐시 쓰기 5분 1.25x / 1시간 2x, 캐시 읽기 0.1x)로 계산한 추정치이며 Sonnet 5 는 도입가($2/$10)를 적용했습니다.")
+            Text("Claude는 기록에 계정 표시가 없어 하나로 보여줍니다. 나눌 기준이 생기면 별도 작업에서 나눕니다.")
+            Text("Codex 쪽은 로그에 계정 식별자가 없어 플랜을 계정 대용으로 씁니다. 같은 플랜을 쓰는 계정이 둘 이상이면 합쳐져 보입니다.")
         }
         .font(.system(size: 11))
         .foregroundStyle(Theme.faint)
