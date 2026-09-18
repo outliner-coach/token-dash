@@ -107,6 +107,10 @@ struct CodexView: View {
                         Divider().overlay(Theme.border).frame(height: 190)
                         recentStrip
                     }
+                    if rl.fiveHour == nil {
+                        Text("5시간 창 기록이 로그에 없습니다. 최근 prolite 응답은 7일 창만 담고 있어 5시간 한도 상태는 표시할 수 없습니다.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.faint)
+                    }
                     otherPlans
                     Text("이 %는 Codex 가 응답마다 로그에 남긴 계정 공식 수치이며, **지금 로그인된 계정의 플랜**(\(snap.account.planType.isEmpty ? "-" : snap.account.planType)) 기록만 골라 씁니다. 마지막 사용 시점의 값이라 그 뒤 다른 기기에서 쓴 분량은 반영되지 않습니다.")
                         .font(.system(size: 11)).foregroundStyle(Theme.faint)
