@@ -120,7 +120,7 @@ struct OverviewView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("파일 \(Fmt.decimal(Int64(snap.scannedFiles)))개 · 원본 \(Fmt.decimal(Int64(snap.rawLines)))줄에서 중복 \(Fmt.decimal(Int64(snap.duplicatesDropped)))줄 제거 → 고유 요청 \(Fmt.decimal(Int64(snap.grand.requests)))건 · 스캔 \(String(format: "%.1f", snap.scanSeconds))초")
             Text("한 번의 API 응답이 content block 수만큼 여러 줄로 기록되고 각 줄이 같은 usage 를 복사해 갖기 때문에, (message.id + requestId) 기준으로 중복을 제거합니다. 다만 output_tokens 만은 마지막 줄에 최종값이 실리므로 그룹 내 최대값을 채택합니다.")
-            Text("비용은 공개 요율(캐시 쓰기 5분 1.25x / 1시간 2x, 캐시 읽기 0.1x)로 계산한 추정치이며 Sonnet 5 는 도입가($2/$10)를 적용했습니다.")
+            Text("비용은 공개 요율(캐시 쓰기 5분 1.25x / 1시간 2x, 캐시 읽기 모델별 0.025x~0.1x)로 계산한 추정치입니다.")
             Text("Claude는 기록에 계정 표시가 없어 하나로 보여줍니다. 나눌 기준이 생기면 별도 작업에서 나눕니다.")
             Text("Codex 쪽은 로그에 계정 식별자가 없어 플랜을 계정 대용으로 씁니다. 같은 플랜을 쓰는 계정이 둘 이상이면 합쳐져 보입니다.")
         }

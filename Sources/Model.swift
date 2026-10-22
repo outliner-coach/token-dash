@@ -45,26 +45,49 @@ struct Rec {
 
 // MARK: - 가격표
 
-/// 100만 토큰당 USD. 캐시 요율은 입력가 대비 배수 (쓰기 5분 1.25x / 1시간 2x, 읽기 0.1x).
+/// 100만 토큰당 USD. 캐시 쓰기는 입력가의 5분 1.25x / 1시간 2x (전 모델 공통), 캐시 읽기는 모델별 배수 (기본 0.1x).
+/// 요율 출처: 공식 Pricing 페이지 (2026-10-22 확인).
 struct Price {
     let input: Double
     let output: Double
+    /// 캐시 읽기 배수 (입력가 대비). Opus 5.5·Sonnet 5.5 는 0.05x, Fable 5.1·Mythos 5.1 은 0.025x.
+    var readMultiplier = 0.1
+    /// Haiku 5.5 만: 프롬프트가 `longPromptTokens` 를 넘는 요청 전체에 적용하는 상위 입력·출력 단가. nil 이면 단일 요율.
+    var longInput: Double? = nil
+    var longOutput: Double? = nil
+    /// 상위 요율 기준. 프롬프트 길이 = 요청 하나의 입력 + 캐시 쓰기 + 캐시 읽기 토큰 합 (출력 제외).
+    static let longPromptTokens = 100_000
+
     var cw5m: Double { input * 1.25 }
     var cw1h: Double { input * 2.0 }
-    var cacheRead: Double { input * 0.1 }
+    var cacheRead: Double { input * readMultiplier }
 
     static func isFableName(_ s: String) -> Bool {
         s.hasPrefix("claude-fable") || s.hasPrefix("claude-mythos")
     }
 
-    /// Sonnet 5 는 2026-08-31 까지 도입가($2/$10)가 적용된다. 2026년 데이터는 전부 그 구간.
+    /// 접두 매칭은 위에서부터 첫 일치만 쓴다. 더 구체적인 접두(5-5, 5-1, 4-1 …)를 일반 접두보다 앞에 둔다.
+    /// 날짜 접미가 붙은 ID(`claude-opus-4-1-20250805` 등)도 접두로 걸린다.
     static func of(_ model: String) -> Price? {
+        if model.hasPrefix("claude-fable-5-1") || model.hasPrefix("claude-mythos-5-1") {
+            return Price(input: 10, output: 50, readMultiplier: 0.025)
+        }
         if model.hasPrefix("claude-fable-5") || model.hasPrefix("claude-mythos-5") {
             return Price(input: 10, output: 50)
         }
+        if model.hasPrefix("claude-opus-5-5") { return Price(input: 4, output: 20, readMultiplier: 0.05) }
+        // Opus 4.1·Opus 4(퇴역)는 $15/$75. 4.5 이상(`claude-opus-4-5` …)과 섞이지 않도록 4-1·4-0·날짜형 4-2025… 만 잡는다.
+        if model.hasPrefix("claude-opus-4-1") || model.hasPrefix("claude-opus-4-0")
+            || model.hasPrefix("claude-opus-4-2025") {
+            return Price(input: 15, output: 75)
+        }
         if model.hasPrefix("claude-opus-") { return Price(input: 5, output: 25) }
-        if model.hasPrefix("claude-sonnet-5") { return Price(input: 2, output: 10) }  // 도입가
+        if model.hasPrefix("claude-sonnet-5-5") { return Price(input: 2, output: 10, readMultiplier: 0.05) }
+        if model.hasPrefix("claude-sonnet-5") { return Price(input: 2, output: 10) }  // 정가로 확정 (도입가 아님)
         if model.hasPrefix("claude-sonnet-") { return Price(input: 3, output: 15) }
+        if model.hasPrefix("claude-haiku-5-5") {
+            return Price(input: 0.10, output: 0.50, longInput: 0.50, longOutput: 2.50)
+        }
         if model.hasPrefix("claude-haiku-4") { return Price(input: 1, output: 5) }
         if model.hasPrefix("claude-haiku-3-5") { return Price(input: 0.8, output: 4) }
         if model.hasPrefix("claude-3-haiku") { return Price(input: 0.25, output: 1.25) }
@@ -72,12 +95,22 @@ struct Price {
     }
 
     func cost(_ r: Rec) -> Double {
+        let p = rates(for: r)
         let m = 1.0 / 1_000_000.0
-        return (Double(r.input) * input
-            + Double(r.cw5) * cw5m
-            + Double(r.cw1) * cw1h
-            + Double(r.cr) * cacheRead
-            + Double(r.out) * output) * m
+        return (Double(r.input) * p.input
+            + Double(r.cw5) * p.cw5m
+            + Double(r.cw1) * p.cw1h
+            + Double(r.cr) * p.cacheRead
+            + Double(r.out) * p.output) * m
+    }
+
+    /// 이 요청에 적용할 요율. 상위 요율이 있는 모델(Haiku 5.5)은 프롬프트가 10만 토큰을 넘으면
+    /// 캐시 히트가 섞여 있어도 그 요청 전체를 상위 요율로 센다 (요청마다 따로 판정).
+    private func rates(for r: Rec) -> Price {
+        guard let li = longInput, let lo = longOutput,
+              Int(r.input) + Int(r.cw5) + Int(r.cw1) + Int(r.cr) > Price.longPromptTokens
+        else { return self }
+        return Price(input: li, output: lo, readMultiplier: readMultiplier)
     }
 }
 
